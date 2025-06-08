@@ -18,8 +18,9 @@ class BLEClientSerial: public Stream
         bool begin(char* localName);
         int available(void);
         int peek(void);
-        bool connected(void);
         bool connect(void);
+        bool connect(unsigned long timeout_ms);  // New timeout version
+        bool isConnected(void);                   // New connection status method
         int read(void);
         size_t write(uint8_t c);
         size_t write(const uint8_t *buffer, size_t size);
@@ -29,6 +30,7 @@ class BLEClientSerial: public Stream
     private:
         BLERemoteCharacteristic* pTxCharacteristic;
         BLERemoteCharacteristic* pRxCharacteristic;
+        BLEClient* pBLEClient = nullptr;          // New client reference
         String targetDeviceName;
 
         friend class MyClientCallback;
