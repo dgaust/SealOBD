@@ -2,6 +2,7 @@
 #include <ArduinoMqttClient.h>
 #include <M5Unified.h>
 #include <Arduino.h>
+#include <time.h>
 #include "ELMduino.h"
 #include "BLEClientSerial.h"
 #include "arduino_secrets.h"
@@ -19,6 +20,7 @@ typedef enum {
   OBD_SETUP,
   OBD_READ_SOC,
   WIFI_CONNECT,
+  NTP_SYNC,        // New state for NTP synchronization
   MQTT_CONNECT,
   MQTT_PUBLISH,
   WAIT_CYCLE
@@ -30,6 +32,27 @@ float state_of_charge = 0.0;
 bool obd_connected = false;
 bool wifi_connected = false;
 bool mqtt_connected = false;
+bool time_synced = false;  // Track if time has been synchronized
+
+// Bluetooth timeout tracking variables
+int consecutive_bt_timeouts = 0;
+const int MAX_CONSECUTIVE_BT_TIMEOUTS = 2;
+bool car_connection_lost = false;
+
+// Timeout variables
+unsigned long elm_connection_start_time = 0;
+unsigned long elm_soc_start_time = 0;
+unsigned long ntp_sync_start_time = 0;
+const unsigned long ELM_CONNECTION_TIMEOUT = 30000; // 30 seconds for BLE connection
+const unsigned long ELM_INIT_TIMEOUT = 15000;       // 15 seconds for ELM initialization
+const unsigned long ELM_SOC_TIMEOUT = 10000;        // 10 seconds for SoC reading
+const unsigned long NTP_SYNC_TIMEOUT = 10000;       // 10 seconds for NTP sync
+
+// NTP Configuration
+const char* ntpServer1 = "pool.ntp.org";
+const char* ntpServer2 = "time.nist.gov";
+const char* ntpServer3 = "time.google.com";
+const char* time_zone = "AEST-10AEDT,M10.1.0,M4.1.0/3";  // Australia/Sydney timezone
 
 char ssid[] = SECRET_SSID;
 char pass[] = SECRET_PASS;
@@ -65,6 +88,47 @@ void wifi_setup() {
   }
   Serial.println(WiFi.localIP());
   wifi_connected = true;
+}
+
+bool sync_time_with_ntp() {
+  Serial.println("Synchronizing time with NTP servers...");
+  
+  // Configure NTP with multiple servers for redundancy
+  configTime(0, 0, ntpServer1, ntpServer2, ntpServer3);
+  
+  // Set timezone for Australia/Sydney
+  setenv("TZ", time_zone, 1);
+  tzset();
+  
+  // Wait for time synchronization
+  time_t now = 0;
+  struct tm timeinfo = { 0 };
+  int retry = 0;
+  const int retry_count = 15;  // Try for up to 15 seconds
+  
+  while (timeinfo.tm_year < (2024 - 1900) && ++retry < retry_count) {
+    Serial.print("Waiting for system time to be set... (");
+    Serial.print(retry);
+    Serial.print("/");
+    Serial.print(retry_count);
+    Serial.println(")");
+    delay(1000);
+    time(&now);
+    localtime_r(&now, &timeinfo);
+  }
+  
+  if (timeinfo.tm_year < (2024 - 1900)) {
+    Serial.println("Failed to obtain time from NTP servers");
+    return false;
+  }
+  
+  // Print synchronized time
+  char time_str[64];
+  strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S %Z", &timeinfo);
+  Serial.print("Time synchronized: ");
+  Serial.println(time_str);
+  
+  return true;
 }
 
 void mqtt_setup() {
@@ -121,18 +185,106 @@ void publish_status(const char* status_message) {
 
 void publish_last_update() {
   if (mqtt_connected) {
-    unsigned long currentTime = millis();
+    if (!time_synced) {
+      Serial.println("Warning: Time not synchronized, publishing placeholder timestamp");
+      mqttClient.beginMessage(last_update_topic, willRetain);
+      mqttClient.print("TIME_NOT_SYNCED");
+      mqttClient.endMessage();
+      return;
+    }
+    
+    // Get current time components
+    time_t now;
+    struct tm timeinfo;
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    
+    // Format as readable datetime string with timezone
+    char datetime_str[64];
+    strftime(datetime_str, sizeof(datetime_str), "%Y-%m-%d %H:%M:%S %Z", &timeinfo);
+    
     Serial.print("Publishing last update time: ");
-    Serial.println(currentTime);
+    Serial.println(datetime_str);
     mqttClient.beginMessage(last_update_topic, willRetain);
-    mqttClient.print(currentTime);
+    mqttClient.print(datetime_str);
     mqttClient.endMessage();
+  }
+}
+
+bool is_bluetooth_timeout_error(const char* error_message) {
+  // Check if the error is related to Bluetooth connection/timeout
+  return (strstr(error_message, "ELM_BLE_CONNECTION_TIMEOUT") != NULL ||
+          strstr(error_message, "ELM_INIT_TIMEOUT") != NULL ||
+          strstr(error_message, "SOC_READ_TIMEOUT") != NULL);
+}
+
+void handle_elm_timeout(const char* error_message) {
+  Serial.print("ELM327 timeout: ");
+  Serial.println(error_message);
+  
+  // Track consecutive Bluetooth timeouts
+  if (is_bluetooth_timeout_error(error_message)) {
+    consecutive_bt_timeouts++;
+    Serial.print("Consecutive Bluetooth timeouts: ");
+    Serial.println(consecutive_bt_timeouts);
+    
+    // Check if we've reached the threshold for "No Car Connection"
+    if (consecutive_bt_timeouts >= MAX_CONSECUTIVE_BT_TIMEOUTS) {
+      car_connection_lost = true;
+      Serial.println("Maximum consecutive Bluetooth timeouts reached - No Car Connection");
+    }
+  } else {
+    // Reset counter for non-Bluetooth errors
+    consecutive_bt_timeouts = 0;
+    car_connection_lost = false;
+  }
+  
+  // Try to establish minimal connections to report failure
+  if (!wifi_connected) {
+    wifi_setup();
+  }
+  
+  // Sync time if not done yet and WiFi is connected
+  if (!time_synced && wifi_connected) {
+    time_synced = sync_time_with_ntp();
+  }
+  
+  if (!mqtt_connected && wifi_connected) {
+    mqtt_setup();
+  }
+  
+  if (mqtt_connected) {
+    // Publish appropriate status based on car connection state
+    if (car_connection_lost) {
+      publish_status("No Car Connection");
+    } else {
+      publish_status(error_message);
+    }
+    publish_last_update();
+    mqtt_disconnect();
+    wifi_disconnect();
+  }
+  
+  // Clean up any partial connections
+  obd_disconnect();
+  
+  // Wait before next retry cycle
+  main_state = WAIT_CYCLE;
+  updateInterval = 60000; // Wait 1 minute before retry
+}
+
+void reset_bluetooth_timeout_counter() {
+  if (consecutive_bt_timeouts > 0) {
+    Serial.print("Resetting Bluetooth timeout counter from ");
+    Serial.println(consecutive_bt_timeouts);
+    consecutive_bt_timeouts = 0;
+    car_connection_lost = false;
   }
 }
 
 void setup() {
   DEBUG_PORT.begin(115200);
-  Serial.println("Starting OBD-first flow...");
+  Serial.println("Starting OBD-first flow with NTP time sync...");
   
   // Initialize but don't connect yet - connection will happen in OBD_SETUP state
 }
@@ -141,71 +293,70 @@ void status_update() {
   switch (main_state) {
     case OBD_SETUP:
       {
-        Serial.println("Step 1: Setting up OBD connection...");
+        static enum { 
+          SETUP_START, 
+          BLE_CONNECTING, 
+          ELM_INITIALIZING 
+        } setup_substep = SETUP_START;
         
-        // Start fresh BLE connection
-        ELM_PORT.begin("OBDLink CX");
-        
-        if (!ELM_PORT.connect()) {
-          DEBUG_PORT.println("Couldn't connect to OBD scanner - Phase 1");
-          // Try to establish minimal connections to report failure
-          if (!wifi_connected) {
-            wifi_setup();
-          }
-          if (!mqtt_connected && wifi_connected) {
-            mqtt_setup();
-          }
-          if (mqtt_connected) {
-            publish_status("ELM_CONNECTION_FAILED_PHASE1");
-            publish_last_update();
-            mqtt_disconnect();
-            wifi_disconnect();
-          }
-          delay(5000); // Wait before retry
-          return;
+        switch (setup_substep) {
+          case SETUP_START:
+            Serial.println("Step 1: Setting up OBD connection...");
+            ELM_PORT.begin("OBDLink CX");
+            elm_connection_start_time = millis();
+            setup_substep = BLE_CONNECTING;
+            break;
+            
+          case BLE_CONNECTING:
+            Serial.println("Attempting BLE connection with timeout...");
+            if (!ELM_PORT.connect(15000)) { // 15 second timeout
+              Serial.println("BLE connection failed or timed out");
+              handle_elm_timeout("ELM_BLE_CONNECTION_TIMEOUT");
+              setup_substep = SETUP_START; // Reset for next cycle
+              return;
+            }
+            Serial.println("BLE connected, initializing ELM327...");
+            elm_connection_start_time = millis(); // Reuse for init timeout
+            setup_substep = ELM_INITIALIZING;
+            break;
+            
+          case ELM_INITIALIZING:
+            if (!myELM327.begin(ELM_PORT, true, 2000)) {
+              if (millis() - elm_connection_start_time > ELM_INIT_TIMEOUT) {
+                handle_elm_timeout("ELM_INIT_TIMEOUT");
+                setup_substep = SETUP_START; // Reset for next cycle
+                return;
+              }
+              Serial.println("Initializing ELM327...");
+              delay(1000);
+              return; // Stay in this state until initialized or timeout
+            }
+            
+            Serial.println("Connected to ELM327, configuring...");
+            
+            // Initialize ELM327 with required commands
+            myELM327.sendCommand_Blocking("ATZ");
+            myELM327.sendCommand_Blocking("ATD");
+            myELM327.sendCommand_Blocking("ATD0");
+            myELM327.sendCommand_Blocking("ATH1");
+            myELM327.sendCommand_Blocking("ATSP6");
+            myELM327.sendCommand_Blocking("ATE0");
+            myELM327.sendCommand_Blocking("ATH1");
+            myELM327.sendCommand_Blocking("ATM0");
+            myELM327.sendCommand_Blocking("ATS0");
+            myELM327.sendCommand_Blocking("ATAT1");
+            myELM327.sendCommand_Blocking("ATAL");
+            myELM327.sendCommand_Blocking("STCSEGT1");
+            myELM327.sendCommand_Blocking("ATST96");
+            myELM327.sendCommand_Blocking("ATSH7E7");
+            
+            obd_connected = true;
+            main_state = OBD_READ_SOC;
+            nb_query_state = SEND_COMMAND;
+            setup_substep = SETUP_START; // Reset for next cycle
+            Serial.println("OBD setup complete, moving to SoC reading...");
+            break;
         }
-
-        if (!myELM327.begin(ELM_PORT, true, 2000)) {
-          Serial.println("Couldn't connect to OBD scanner - Phase 2");
-          // Try to establish minimal connections to report failure
-          if (!wifi_connected) {
-            wifi_setup();
-          }
-          if (!mqtt_connected && wifi_connected) {
-            mqtt_setup();
-          }
-          if (mqtt_connected) {
-            publish_status("ELM_CONNECTION_FAILED_PHASE2");
-            publish_last_update();
-            mqtt_disconnect();
-            wifi_disconnect();
-          }
-          delay(5000); // Wait before retry
-          return;
-        }
-
-        Serial.println("Connected to ELM327, initializing...");
-        
-        // Initialize ELM327 with required commands
-        myELM327.sendCommand_Blocking("ATZ");
-        myELM327.sendCommand_Blocking("ATD");
-        myELM327.sendCommand_Blocking("ATD0");
-        myELM327.sendCommand_Blocking("ATH1");
-        myELM327.sendCommand_Blocking("ATSP6");
-        myELM327.sendCommand_Blocking("ATE0");
-        myELM327.sendCommand_Blocking("ATH1");
-        myELM327.sendCommand_Blocking("ATM0");
-        myELM327.sendCommand_Blocking("ATS0");
-        myELM327.sendCommand_Blocking("ATAT1");
-        myELM327.sendCommand_Blocking("ATAL");
-        myELM327.sendCommand_Blocking("STCSEGT1");
-        myELM327.sendCommand_Blocking("ATST96");
-        myELM327.sendCommand_Blocking("ATSH7E7");
-        
-        obd_connected = true;
-        main_state = OBD_READ_SOC;
-        nb_query_state = SEND_COMMAND;
-        Serial.println("OBD setup complete, moving to SoC reading...");
         break;
       }
 
@@ -216,7 +367,15 @@ void status_update() {
         if (nb_query_state == SEND_COMMAND) {
           myELM327.sendCommand("221FFC");
           nb_query_state = WAITING_RESP;
+          elm_soc_start_time = millis(); // Start SoC reading timeout
         } else if (nb_query_state == WAITING_RESP) {
+          // Check for timeout
+          if (millis() - elm_soc_start_time > ELM_SOC_TIMEOUT) {
+            Serial.println("SoC reading timeout");
+            handle_elm_timeout("SOC_READ_TIMEOUT");
+            return;
+          }
+          
           Serial.print("Awaiting response from ELM327...");
           myELM327.get_response();
         }
@@ -234,6 +393,9 @@ void status_update() {
           Serial.print("State of Charge: ");
           Serial.println(state_of_charge, 2);
           
+          // Reset Bluetooth timeout counter on successful SoC read
+          reset_bluetooth_timeout_counter();
+          
           nb_query_state = SEND_COMMAND;
           main_state = WIFI_CONNECT;
           Serial.println("SoC read complete, moving to WiFi connection...");
@@ -243,20 +405,8 @@ void status_update() {
           myELM327.printError();
           
           // Report SoC reading failure
-          if (!wifi_connected) {
-            wifi_setup();
-          }
-          if (!mqtt_connected && wifi_connected) {
-            mqtt_setup();
-          }
-          if (mqtt_connected) {
-            publish_status("SOC_READ_FAILED");
-            publish_last_update();
-            mqtt_disconnect();
-            wifi_disconnect();
-          }
-          
-          delay(2000);
+          handle_elm_timeout("SOC_READ_FAILED");
+          return;
         }
         break;
       }
@@ -265,14 +415,36 @@ void status_update() {
       {
         Serial.println("Step 3: Connecting to WiFi...");
         wifi_setup();
-        main_state = MQTT_CONNECT;
-        Serial.println("WiFi connected, moving to MQTT connection...");
+        main_state = NTP_SYNC;  // Move to NTP sync instead of MQTT
+        Serial.println("WiFi connected, moving to NTP time synchronization...");
+        break;
+      }
+
+    case NTP_SYNC:
+      {
+        Serial.println("Step 4: Synchronizing time with NTP servers...");
+        ntp_sync_start_time = millis();
+        
+        if (sync_time_with_ntp()) {
+          time_synced = true;
+          main_state = MQTT_CONNECT;
+          Serial.println("Time synchronized, moving to MQTT connection...");
+        } else {
+          if (millis() - ntp_sync_start_time > NTP_SYNC_TIMEOUT) {
+            Serial.println("NTP synchronization timeout, continuing without accurate time...");
+            time_synced = false;
+            main_state = MQTT_CONNECT;
+          } else {
+            Serial.println("NTP sync failed, retrying in 2 seconds...");
+            delay(2000);
+          }
+        }
         break;
       }
 
     case MQTT_CONNECT:
       {
-        Serial.println("Step 4: Connecting to MQTT broker...");
+        Serial.println("Step 5: Connecting to MQTT broker...");
         mqtt_setup();
         if (mqtt_connected) {
           main_state = MQTT_PUBLISH;
@@ -286,21 +458,29 @@ void status_update() {
 
     case MQTT_PUBLISH:
       {
-        Serial.println("Step 5: Publishing State of Charge to MQTT...");
+        Serial.println("Step 6: Publishing State of Charge to MQTT...");
         if (mqtt_connected) {
-          // Publish successful status
-          publish_status("CONNECTED");
+          // Publish appropriate status based on car connection state
+          if (car_connection_lost) {
+            publish_status("No Car Connection");
+          } else {
+            publish_status("CONNECTED");
+          }
           
-          // Publish SoC data
-          mqttClient.beginMessage(topic, willRetain);
-          mqttClient.print(state_of_charge);
-          mqttClient.endMessage();
-          Serial.print("Published SoC: ");
-          Serial.print(state_of_charge);
-          Serial.print(" to topic: ");
-          Serial.println(topic);
+          // Only publish SoC data if we have a car connection
+          if (!car_connection_lost) {
+            mqttClient.beginMessage(topic, willRetain);
+            mqttClient.print(state_of_charge);
+            mqttClient.endMessage();
+            Serial.print("Published SoC: ");
+            Serial.print(state_of_charge);
+            Serial.print(" to topic: ");
+            Serial.println(topic);
+          } else {
+            Serial.println("Skipping SoC publish due to no car connection");
+          }
           
-          // Publish last update time
+          // Publish last update time (with proper timezone)
           publish_last_update();
           
           // Wait a moment for messages to be sent
@@ -313,7 +493,7 @@ void status_update() {
         obd_disconnect();
         
         main_state = WAIT_CYCLE;
-        updateInterval = 300000; // Wait 2 minutes before next cycle
+        updateInterval = 300000; // Wait 5 minutes before next cycle
         Serial.println("All connections closed. Cycle complete, waiting for next update...");
         break;
       }
