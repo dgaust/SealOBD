@@ -175,6 +175,13 @@ int BLEClientSerial::peek(void)
 
 bool BLEClientSerial::connect(void)
 {
+    return connect(15000); // Default 15 second timeout
+}
+
+bool BLEClientSerial::connect(unsigned long timeout_ms)
+{
+    unsigned long start_time = millis();
+    
     Serial.println("Forming a connection to ");
     Serial.println(myDevice->getAddress().toString().c_str());
 
@@ -190,12 +197,38 @@ bool BLEClientSerial::connect(void)
     BLEClient *pClient = BLEDevice::createClient();
     pClient->setClientCallbacks(new MyClientCallback());
 
-    pClient->connect(myDevice);
+    // Add timeout to the actual connection attempt
+    Serial.println("Attempting BLE client connection...");
+    unsigned long connect_start = millis();
+    
+    // Try to connect with timeout monitoring
+    while (!pClient->connect(myDevice)) {
+        if (millis() - connect_start > timeout_ms) {
+            Serial.println("BLE connection timeout!");
+            delete pClient;
+            return false;
+        }
+        delay(100);
+        Serial.print(".");
+    }
+    
+    Serial.println("\nBLE client connected successfully!");
+
+    // Check for overall timeout
+    if (millis() - start_time > timeout_ms) {
+        Serial.println("Overall connection setup timeout!");
+        pClient->disconnect();
+        delete pClient;
+        return false;
+    }
 
     std::map<std::string, BLERemoteService *> *pRemoteServices = pClient->getServices();
     if (pRemoteServices == nullptr)
     {
         Serial.println(" - No services");
+        pClient->disconnect();
+        delete pClient;
+        return false;
     }
 
     BLERemoteService *pService = pClient->getService(serviceUUID_FFF0);
@@ -204,11 +237,23 @@ bool BLEClientSerial::connect(void)
         Serial.println("[DEBUG] Service FFF0 found.");
 
         pRxCharacteristic = pService->getCharacteristic(rxUUID);
+        if (!pRxCharacteristic) {
+            Serial.println("[DEBUG] CHAR rxUUID NOT found.");
+            pClient->disconnect();
+            delete pClient;
+            return false;
+        }
         Serial.println("[DEBUG] CHAR rxUUID found.");
         Serial.print("[DEBUG] canNotify ");
         Serial.println(pRxCharacteristic->canNotify());
 
         pTxCharacteristic = pService->getCharacteristic(txUUID);
+        if (!pTxCharacteristic) {
+            Serial.println("[DEBUG] CHAR txUUID NOT found.");
+            pClient->disconnect();
+            delete pClient;
+            return false;
+        }
         Serial.println("[DEBUG] CHAR txUUID found.");
         Serial.print("[DEBUG] canWrite ");
         Serial.println(pTxCharacteristic->canWrite());
@@ -219,8 +264,24 @@ bool BLEClientSerial::connect(void)
             Serial.println("[DEBUG] RX subscribed");
             pRxCharacteristic->registerForNotify(notifyCallback, true);
         }
+        
+        // Store client reference for cleanup
+        pBLEClient = pClient;
+        connected = true;
+        return true;
     }
-    return true;
+    else 
+    {
+        Serial.println("[DEBUG] Service FFF0 NOT found.");
+        pClient->disconnect();
+        delete pClient;
+        return false;
+    }
+}
+
+bool BLEClientSerial::isConnected(void)
+{
+    return connected;
 }
 
 int BLEClientSerial::read(void)
@@ -238,18 +299,24 @@ int BLEClientSerial::read(void)
 
 size_t BLEClientSerial::write(uint8_t c)
 {
-    pTxCharacteristic->writeValue(c, true);
-    delay(10); 
-    return 1;
+    if (connected && pTxCharacteristic) {
+        pTxCharacteristic->writeValue(c, true);
+        delay(10); 
+        return 1;
+    }
+    return 0;
 }
 
 size_t BLEClientSerial::write(const uint8_t *buffer, size_t size)
 {   
-    for (int i = 0; i < size; i++)
-    {
-        pTxCharacteristic->writeValue(buffer[i],false);
+    if (connected && pTxCharacteristic) {
+        for (int i = 0; i < size; i++)
+        {
+            pTxCharacteristic->writeValue(buffer[i],false);
+        }
+        return size;
     }
-    return size;
+    return 0;
 }
 
 void BLEClientSerial::flush()
@@ -259,5 +326,11 @@ void BLEClientSerial::flush()
 
 void BLEClientSerial::end()
 {
-    // close connection
+    if (connected && pBLEClient) {
+        Serial.println("Ending BLE connection...");
+        pBLEClient->disconnect();
+        delete pBLEClient;
+        pBLEClient = nullptr;
+        connected = false;
+    }
 }
