@@ -73,11 +73,11 @@ unsigned long updateInterval = 0;
 bool willRetain = true;
 int willQos = 1;
 
-const char broker[] = "10.0.0.122";
-int port = 1883;
+const char broker[] = SECRET_MQTT_IP;
+int port = SECRET_MQTT_PORT;
 const char topic[] = "bydseal/soc";
 const char temp_topic[] = "bydseal/battery_temp";
-const char voltage_topic[] = "bydseal/battery_voltage";  // New MQTT topic for battery voltage
+const char voltage_topic[] = "bydseal/battery_voltage"; 
 const char status_topic[] = "bydseal/status";
 const char last_update_topic[] = "bydseal/last_update";
 
@@ -220,7 +220,7 @@ bool is_bluetooth_timeout_error(const char* error_message) {
           strstr(error_message, "ELM_INIT_TIMEOUT") != NULL ||
           strstr(error_message, "SOC_READ_TIMEOUT") != NULL ||
           strstr(error_message, "TEMP_READ_TIMEOUT") != NULL ||
-          strstr(error_message, "VOLTAGE_READ_TIMEOUT") != NULL);  // Added voltage timeout
+          strstr(error_message, "VOLTAGE_READ_TIMEOUT") != NULL); 
 }
 
 void handle_elm_timeout(const char* error_message) {
