@@ -7,6 +7,9 @@
 #include "BLEClientSerial.h"
 #include "arduino_secrets.h"
 
+// Configuration: Set to true to enable fallback WiFi network, false for single network only
+const bool USE_FALLBACK_WIFI = false;
+
 BLEClientSerial BLESerial;
 WiFiClient wifiClient;
 MqttClient mqttClient(wifiClient);
@@ -66,6 +69,10 @@ const char* time_zone = "AEST-10AEDT,M10.1.0,M4.1.0/3";
 
 char ssid[] = SECRET_SSID;
 char pass[] = SECRET_PASS;
+#if USE_FALLBACK_WIFI
+char fallback_ssid[] = SECRET_FALLBACK_SSID;
+char fallback_pass[] = SECRET_FALLBACK_WIFIPASS;
+#endif
 char mqtt_user[] = SECRET_MQTT_USER;
 char mqtt_pass[] = SECRET_MQTT_PASS;
 unsigned long lastStatusUpdate = 0;
@@ -92,14 +99,63 @@ uint8_t ctoi(uint8_t value) {
 
 void wifi_setup() {
   WiFi.mode(WIFI_STA);
+  
+  // Try primary WiFi network first
+  Serial.print("Connecting to primary WiFi: ");
+  Serial.println(ssid);
   WiFi.begin(ssid, pass);
-  Serial.print("Connecting to WiFi ..");
-  while (WiFi.status() != WL_CONNECTED) {
+  
+  int attempts = 0;
+  const int max_attempts = 20; // 20 seconds timeout for primary network
+  
+  while (WiFi.status() != WL_CONNECTED && attempts < max_attempts) {
     Serial.print('.');
     delay(1000);
+    attempts++;
   }
-  Serial.println(WiFi.localIP());
-  wifi_connected = true;
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println();
+    Serial.print("Connected to primary WiFi. IP address: ");
+    Serial.println(WiFi.localIP());
+    wifi_connected = true;
+    return;
+  }
+  
+#if USE_FALLBACK_WIFI
+  // Primary network failed, try fallback network if enabled
+  Serial.println();
+  Serial.println("Primary WiFi connection failed. Trying fallback network...");
+  Serial.print("Connecting to fallback WiFi: ");
+  Serial.println(fallback_ssid);
+  
+  WiFi.disconnect();
+  delay(1000);
+  WiFi.begin(fallback_ssid, fallback_pass);
+  
+  attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < max_attempts) {
+    Serial.print('.');
+    delay(1000);
+    attempts++;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println();
+    Serial.print("Connected to fallback WiFi. IP address: ");
+    Serial.println(WiFi.localIP());
+    wifi_connected = true;
+  } else {
+    Serial.println();
+    Serial.println("Both WiFi networks failed to connect!");
+    wifi_connected = false;
+  }
+#else
+  // No fallback WiFi configured
+  Serial.println();
+  Serial.println("Primary WiFi connection failed and no fallback network configured!");
+  wifi_connected = false;
+#endif
 }
 
 bool sync_time_with_ntp() {
@@ -497,8 +553,13 @@ void status_update() {
       {
         Serial.println("Step 5: Connecting to WiFi...");
         wifi_setup();
-        main_state = NTP_SYNC;
-        Serial.println("WiFi connected, moving to NTP time synchronization...");
+        if (wifi_connected) {
+          main_state = NTP_SYNC;
+          Serial.println("WiFi connected, moving to NTP time synchronization...");
+        } else {
+          Serial.println("WiFi connection failed, retrying in 10 seconds...");
+          delay(10000);
+        }
         break;
       }
 
