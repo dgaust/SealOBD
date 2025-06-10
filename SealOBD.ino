@@ -8,7 +8,7 @@
 #include "arduino_secrets.h"
 
 // Configuration: Set to true to enable fallback WiFi network, false for single network only
-const bool USE_FALLBACK_WIFI = false;
+const bool USE_FALLBACK_WIFI = true;
 
 BLEClientSerial BLESerial;
 WiFiClient wifiClient;
@@ -23,7 +23,7 @@ typedef enum {
   OBD_SETUP,
   OBD_READ_SOC,
   OBD_READ_BATTERY_TEMP,
-  OBD_READ_BATTERY_VOLTAGE,  // New state for battery voltage
+  OBD_READ_BATTERY_VOLTAGE, 
   WIFI_CONNECT,
   NTP_SYNC,
   MQTT_CONNECT,
@@ -34,7 +34,7 @@ typedef enum {
 main_states main_state = OBD_SETUP;
 int nb_query_state = SEND_COMMAND;
 int nb_temp_query_state = SEND_COMMAND;
-int nb_voltage_query_state = SEND_COMMAND;  // Separate query state for voltage
+int nb_voltage_query_state = SEND_COMMAND;  
 float state_of_charge = 0.0;
 float battery_temperature = 0.0;
 float battery_voltage = 0.0;  // New variable for battery voltage
