@@ -20,7 +20,7 @@ typedef enum {
   OBD_SETUP,
   OBD_READ_SOC,
   OBD_READ_BATTERY_TEMP,
-  OBD_READ_BATTERY_VOLTAGE,  // New state for battery voltage
+  OBD_READ_BATTERY_VOLTAGE, 
   WIFI_CONNECT,
   NTP_SYNC,
   MQTT_CONNECT,
@@ -31,10 +31,10 @@ typedef enum {
 main_states main_state = OBD_SETUP;
 int nb_query_state = SEND_COMMAND;
 int nb_temp_query_state = SEND_COMMAND;
-int nb_voltage_query_state = SEND_COMMAND;  // Separate query state for voltage
+int nb_voltage_query_state = SEND_COMMAND; 
 float state_of_charge = 0.0;
 float battery_temperature = 0.0;
-float battery_voltage = 0.0;  // New variable for battery voltage
+float battery_voltage = 0.0; 
 bool obd_connected = false;
 bool wifi_connected = false;
 bool mqtt_connected = false;
@@ -49,13 +49,13 @@ bool car_connection_lost = false;
 unsigned long elm_connection_start_time = 0;
 unsigned long elm_soc_start_time = 0;
 unsigned long elm_temp_start_time = 0;
-unsigned long elm_voltage_start_time = 0;  // New timeout for voltage reading
+unsigned long elm_voltage_start_time = 0; 
 unsigned long ntp_sync_start_time = 0;
 const unsigned long ELM_CONNECTION_TIMEOUT = 30000;
 const unsigned long ELM_INIT_TIMEOUT = 15000;
 const unsigned long ELM_SOC_TIMEOUT = 10000;
 const unsigned long ELM_TEMP_TIMEOUT = 10000;
-const unsigned long ELM_VOLTAGE_TIMEOUT = 10000;  // 10 seconds for voltage reading
+const unsigned long ELM_VOLTAGE_TIMEOUT = 10000; 
 const unsigned long NTP_SYNC_TIMEOUT = 10000;
 
 // NTP Configuration
