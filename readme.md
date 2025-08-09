@@ -1,173 +1,162 @@
 # BYD Seal OBD Monitor
 
-Reads the current state of charge from a BYD Seal (and possibly others), using an ESP32 conneting to an OBDLink CX using BLE. Publishes the resulting SOC, Battery Voltage and Battery Temp (just testing this value at the moment) to an MQTT server.
+**BYD Seal OBD Monitor**
 
-Requires the ELMDuino library https://docs.arduino.cc/libraries/elmduino/ 
+Reads the current state of charge from a BYD Seal (and possibly others), using an ESP32 connecting to an OBDLink CX using BLE.
 
-The code contains a a slightly tweaked BLE Serial library from https://github.com/vdvornichenko/obd-ble-serial
+Requires the ELMDuino library https://docs.arduino.cc/libraries/elmduino/
 
-## Architecture Overview
+The code contains a slightly tweaked BLE Serial library from https://github.com/vdvornichenko/obd-ble-serial
 
-The code has been split into several focused libraries:
+## What It Does
 
-### 1. **OBDManager** (`OBDManager.h/.cpp`)
-- **Purpose**: Handles all OBD-II/ELM327 communication
-- **Responsibilities**:
-  - Bluetooth connection to ELM327 device
-  - Reading State of Charge (SoC)
-  - Reading battery temperature
-  - Reading battery voltage  
-  - Connection timeout and retry logic
-  - Error handling and status tracking
+This project turns an ESP32 into a car battery monitor for your BYD Seal. It connects to your car through an OBDLink CX adapter using Bluetooth, reads important battery information, and sends it to your home automation system using MQTT.
 
-### 2. **ConnectivityManager** (`ConnectivityManager.h/.cpp`)
-- **Purpose**: Manages all network connectivity
-- **Responsibilities**:
-  - WiFi connection and disconnection
-  - MQTT broker connection and messaging
-  - NTP time synchronization
-  - Network timeout handling
-  - Connection status monitoring
+### Information It Collects
+- **Battery State of Charge** - How full your battery is (as a percentage)
+- **Battery Temperature** - How hot or cold your battery pack is
+- **Battery Voltage** - The current voltage of your battery
+- **Total Charges** - How many times the car has been charged
+- **Total kWh Charged** - Total energy put into the battery over its lifetime
+- **Total kWh Discharged** - Total energy taken out of the battery over its lifetime
 
-### 3. **DataPublisher** (`DataPublisher.h/.cpp`)
-- **Purpose**: Handles data publishing to MQTT topics
-- **Responsibilities**:
-  - Publishing OBD data (SoC, temperature, voltage)
-  - Publishing system status messages
-  - Publishing timestamp information
-  - Error status publishing
-  - Data formatting
+## What You Need
 
-### 4. **SystemController** (`SystemController.h/.cpp`)
-- **Purpose**: Orchestrates the entire system workflow
-- **Responsibilities**:
-  - State machine management
-  - Coordinating between all managers
-  - Cycle timing and intervals
-  - Overall error handling
-  - System lifecycle management
+### Hardware
+- **ESP32 board** (any ESP32 development board should work)
+- **OBDLink CX** - A Bluetooth OBD adapter that plugs into your car
+- **BYD Seal** or similar BYD electric vehicle
 
-### 5. **Main Application** (`main.ino`)
-- **Purpose**: System configuration and main loop
-- **Responsibilities**:
-  - System initialization
-  - Configuration setup
-  - Main update loop
+### Software Libraries
+- Arduino IDE
+- ELMDuino library
+- ArduinoMqttClient library
+- M5Unified library (if using M5Stack hardware)
 
-## File Structure
+## How to Set It Up
 
-```
-project/
-├── main.ino                    # Main application file
-├── OBDManager.h               # OBD manager header
-├── OBDManager.cpp             # OBD manager implementation
-├── ConnectivityManager.h      # Connectivity manager header  
-├── ConnectivityManager.cpp    # Connectivity manager implementation
-├── DataPublisher.h            # Data publisher header
-├── DataPublisher.cpp          # Data publisher implementation
-├── SystemController.h         # System controller header
-├── SystemController.cpp       # System controller implementation
-├── arduino_secrets.h          # Configuration secrets
-└── README.md                  # This file
-```
-
-## Key Benefits of This Architecture
-
-### **Separation of Concerns**
-- Each library has a single, well-defined responsibility
-- Easy to understand what each component does
-- Changes in one area don't affect others
-
-### **Improved Maintainability**
-- Bugs can be isolated to specific libraries
-- Updates and improvements can be made incrementally
-- Code is more organized and easier to navigate
-
-### **Better Error Handling**
-- Each component manages its own errors
-- Clear error propagation between components
-- More granular error reporting
-
-### **Enhanced Testing**
-- Individual components can be tested separately
-- Mock objects can be used for unit testing
-- Integration testing is more straightforward
-
-### **Reusability**
-- Libraries can be reused in other projects
-- Components can be easily swapped or upgraded
-- Common patterns are abstracted into reusable classes
-
-## State Machine Flow
-
-The `SystemController` manages the overall system state:
-
-1. **INIT** - Initialize all components
-2. **OBD_READING** - Read data from vehicle via OBD
-3. **CONNECTIVITY_SETUP** - Connect WiFi, sync time, connect MQTT
-4. **DATA_PUBLISHING** - Publish all data to MQTT topics
-5. **ERROR_HANDLING** - Handle any errors that occurred
-6. **COMPLETE_CYCLE** - Clean up connections, set next cycle interval
-7. **WAITING** - Wait for next cycle to begin
-
-## Configuration
-
-All configuration is centralized in `main.ino`:
+### 1. Configure Your Settings
+Create a file called `arduino_secrets.h` and add your network details:
 
 ```cpp
-SystemController::Config config;
-
-// Network settings
-config.connectivity.ssid = SECRET_SSID;
-config.connectivity.password = SECRET_PASS;
-config.connectivity.mqtt_broker = SECRET_MQTT_IP;
-// ... etc
-
-// Timing settings  
-config.normal_cycle_interval = 300000;  // 5 minutes
-config.error_cycle_interval = 60000;    // 1 minute
+#define SECRET_SSID "Your_WiFi_Name"
+#define SECRET_PASS "Your_WiFi_Password"
+#define SECRET_MQTT_USER "mqtt_username"
+#define SECRET_MQTT_PASS "mqtt_password"
+#define SECRET_MQTT_IP "192.168.1.100"  // Your MQTT broker IP
+#define SECRET_MQTT_PORT 1883
 ```
 
-## Error Handling
+### 2. Install the Code
+1. Open Arduino IDE
+2. Install the required libraries through the Library Manager
+3. Copy all the project files to your Arduino project folder
+4. Upload the code to your ESP32
 
-The system now has comprehensive error handling:
+### 3. Connect to Your Car
+1. Plug the OBDLink CX into your car's OBD port (usually under the dashboard)
+2. Power on the ESP32
+3. The ESP32 will automatically find and connect to the OBDLink CX
 
-- **OBD Errors**: Connection timeouts, read failures
-- **Network Errors**: WiFi connection issues, MQTT problems
-- **Publishing Errors**: Failed message publishing
-- **Timeout Protection**: All operations have configurable timeouts
+## How It Works
 
-## Memory Management
+The monitor follows these steps every 5 minutes:
 
-- Proper constructor/destructor patterns
-- Automatic cleanup of connections
-- No memory leaks from unclosed connections
+1. **Connect to Car** - Establishes Bluetooth connection to OBDLink CX
+2. **Read Battery Data** - Gets all the battery information from your car
+3. **Connect to WiFi** - Joins your home network
+4. **Sync Time** - Gets the current time from internet time servers
+5. **Send Data** - Publishes all the information to your MQTT broker
+6. **Sleep** - Waits 5 minutes before doing it all again
 
-## Getting Started
+If something goes wrong, it will retry after 1 minute instead of 5.
 
-1. Copy all library files to your Arduino project directory
-2. Update `arduino_secrets.h` with your credentials
-3. Adjust configuration in `main.ino` as needed
-4. Upload to your ESP32 device
+## MQTT Topics
 
-## Dependencies
+The monitor publishes data to these MQTT topics:
 
-This code still requires the same external libraries:
-- `WiFi.h` 
-- `ArduinoMqttClient.h`
-- `M5Unified.h`
-- `ELMduino.h`
-- `BLEClientSerial.h`
+- `bydseal/soc` - Battery charge percentage
+- `bydseal/battery_temp` - Battery temperature in Celsius
+- `bydseal/battery_voltage` - Battery voltage
+- `bydseal/total_charges` - Number of times charged
+- `bydseal/kwh_charged` - Total kWh charged
+- `bydseal/kwh_discharged` - Total kWh used
+- `bydseal/status` - Current status (Connected or error message)
+- `bydseal/last_update` - When the last update happened
 
-## Future Enhancements
+## Understanding the Files
 
-With this modular architecture, you can easily:
+- **sealobd.ino** - The main program that runs everything
+- **Config.h** - All the settings and options
+- **OBDManager** - Handles talking to your car
+- **MQTTNetworkManager** - Handles WiFi and sending data
+- **TimeManager** - Keeps track of time
+- **Logger** - Shows what's happening (for debugging)
+- **BLEClientSerial** - Bluetooth communication with OBDLink
 
-- Add new data sources (additional OBD PIDs)
-- Implement different connectivity options (cellular, LoRaWAN)
-- Add data logging to SD card
-- Implement web server for local monitoring
-- Add display output for real-time monitoring
-- Implement OTA updates
+## Troubleshooting
 
-The modular design makes all of these enhancements much more manageable than with the original monolithic code.
+### Common Issues
+
+**Can't connect to OBDLink CX**
+- Make sure the OBDLink CX is plugged into your car
+- Check that your car is turned on
+- The adapter name should be "OBDLink CX"
+
+**No data being read**
+- Your car needs to be in "Ready" mode
+- Wait a few seconds after turning on the car
+- Check the serial monitor for error messages
+
+**MQTT not working**
+- Verify your MQTT broker IP address is correct
+- Check username and password
+- Make sure MQTT broker is running
+
+**WiFi won't connect**
+- Double-check your WiFi name and password
+- Make sure the ESP32 is in range of your router
+
+## Customization
+
+### Change Update Frequency
+In `Config.h`, modify these values (in milliseconds):
+- `NORMAL_UPDATE = 300000` - Normal update every 5 minutes
+- `ERROR_RETRY = 60000` - Retry after error every 1 minute
+
+### Change MQTT Topics
+Edit the topic names in `Config.h` under the MQTT namespace.
+
+### Adjust Timeouts
+If connections are timing out, increase the timeout values in `Config.h`.
+
+## Safety Notes
+
+- The monitor only reads data from your car - it doesn't change anything
+- Always plug the OBDLink CX in carefully to avoid damaging the port
+- The system is designed to handle connection losses gracefully
+
+## How to Use the Data
+
+The MQTT data can be used with:
+- **Home Assistant** - Create sensors and automations
+- **Node-RED** - Build flows and dashboards
+- **Grafana** - Create beautiful graphs of your battery usage
+- **Any MQTT client** - Subscribe to topics and use the data
+
+## Support
+
+If you have issues:
+1. Check the serial monitor output for error messages
+2. Verify all your settings in `arduino_secrets.h`
+3. Make sure all required libraries are installed
+4. Try resetting both the ESP32 and OBDLink CX
+
+## Future Improvements
+
+Possible additions to the project:
+- Add a display to show data locally
+- Support for other BYD models
+- Calculate charging efficiency
+- Add estimated range calculations
+- Web interface for configuration
