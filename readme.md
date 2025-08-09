@@ -103,11 +103,6 @@ The monitor publishes data to these MQTT topics:
 - Check that your car is turned on
 - The adapter name should be "OBDLink CX"
 
-**No data being read**
-- Your car needs to be in "Ready" mode
-- Wait a few seconds after turning on the car
-- Check the serial monitor for error messages
-
 **MQTT not working**
 - Verify your MQTT broker IP address is correct
 - Check username and password
