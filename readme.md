@@ -23,7 +23,7 @@ This project turns an ESP32 into a car battery monitor for your BYD Seal. It con
 ## What You Need
 
 ### Hardware
-- **ESP32 board** (any ESP32 development board should work)
+- **ESP32 board** - This has only been tested on the [M5Stack AtomS3 Lite](https://docs.m5stack.com/en/core/AtomS3%20Lite), but other ESP32 boards should work with minor modifications
 - **OBDLink CX** - A Bluetooth OBD adapter that plugs into your car
 - **BYD Seal** or similar BYD electric vehicle
 
@@ -31,7 +31,7 @@ This project turns an ESP32 into a car battery monitor for your BYD Seal. It con
 - Arduino IDE
 - ELMDuino library
 - ArduinoMqttClient library
-- M5Unified library (if using M5Stack hardware)
+- M5Unified library (required for M5Stack AtomS3 Lite)
 
 ## How to Set It Up
 
@@ -143,6 +143,15 @@ The MQTT data can be used with:
 - **Node-RED** - Build flows and dashboards
 - **Grafana** - Create beautiful graphs of your battery usage
 - **Any MQTT client** - Subscribe to topics and use the data
+
+## Tested Hardware
+
+This project has been developed and tested specifically on the **M5Stack AtomS3 Lite**. While the code should work on other ESP32 boards, you may need to:
+- Remove or modify the M5Unified library references
+- Adjust pin configurations if using different hardware
+- Modify the initialization code in `sealobd.ino`
+
+If you're using a different ESP32 board, you'll need to remove the `#include <M5Unified.h>` line from the main sketch.
 
 ## Support
 
