@@ -5,9 +5,15 @@ LogLevel Logger::currentLevel = LogLevel::INFO;
 
 void Logger::begin(unsigned long baudRate) {
     DEBUG_PORT.begin(baudRate);
-    while (!DEBUG_PORT) {
-        ; // Wait for serial port to connect
-    }
+    
+    // FIXED: Remove blocking wait for serial connection
+    // This was causing hangs when no serial monitor connected
+    // while (!DEBUG_PORT) {
+    //     ; // Wait for serial port to connect
+    // }
+    
+    // Instead, just give it a brief moment to initialize
+    delay(100);
 }
 
 void Logger::setLevel(LogLevel level) {
@@ -17,12 +23,15 @@ void Logger::setLevel(LogLevel level) {
 void Logger::log(LogLevel level, const char* message) {
     if (level < currentLevel) return;
     
-    DEBUG_PORT.print("[");
-    DEBUG_PORT.print(millis());
-    DEBUG_PORT.print("] [");
-    DEBUG_PORT.print(levelToString(level));
-    DEBUG_PORT.print("] ");
-    DEBUG_PORT.println(message);
+    // Only try to log if Serial is available (non-blocking check)
+    if (DEBUG_PORT) {
+        DEBUG_PORT.print("[");
+        DEBUG_PORT.print(millis());
+        DEBUG_PORT.print("] [");
+        DEBUG_PORT.print(levelToString(level));
+        DEBUG_PORT.print("] ");
+        DEBUG_PORT.println(message);
+    }
 }
 
 const char* Logger::levelToString(LogLevel level) {

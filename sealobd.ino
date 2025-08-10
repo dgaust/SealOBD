@@ -1,14 +1,16 @@
-#include <M5Unified.h>
+#include <M5AtomS3.h>  // Use M5AtomS3 instead of M5Unified
 #include "Config.h"
 #include "Logger.h"
 #include "OBDManager.h"
 #include "MQTTNetworkManager.h"
 #include "TimeManager.h"
+#include "LEDManager.h"
 
 // Global Objects
 OBDManager obdManager;
 MQTTNetworkManager networkManager;
 TimeManager timeManager;
+LEDManager ledManager;  // LED manager
 
 // State Management
 AppState currentState = AppState::OBD_SETUP;
@@ -36,28 +38,63 @@ void handleError(const char* errorMessage);
 void cleanup();
 
 void setup() {
-    // Initialize logging
+    // Initialize M5AtomS3 FIRST (this must come before other initializations)
+    AtomS3.begin(true);  // Initialize M5AtomS3 Lite with LED enabled
+    
+    // Small delay to ensure M5AtomS3 is properly initialized
+    delay(500);
+    
+    // Initialize LED manager EARLY so we can show status during startup
+    ledManager.begin();
+    ledManager.indicateSetup();  // Purple LED during startup
+    
+    // Initialize logging (now non-blocking)
     Logger::begin(DEBUG_BAUD_RATE);
     Logger::setLevel(LogLevel::INFO);
     
+    // Log startup info (will only appear if serial monitor is connected)
     LOG_INFO("=================================");
     LOG_INFO("SealOBD System Starting...");
     LOG_INFO("=================================");
     LOG_INFO_F("Version: 2.0.0");
     LOG_INFO_F("Normal Update Interval: %d ms", Intervals::NORMAL_UPDATE);
     LOG_INFO_F("Error Retry Interval: %d ms", Intervals::ERROR_RETRY);
+    
+    // Brief startup delay to show startup LED and ensure all systems ready
+    delay(2000);
+    
+    // Show we're ready with a green blink
+    ledManager.blink(LED::GREEN, 2, 200);
+    
+    LOG_INFO("Setup complete, starting main loop...");
 }
 
 void loop() {
-    // Poll MQTT if connected
+    // Update M5AtomS3 (required for LED and other functions)
+    AtomS3.update();
+    
+    // Update LED animations
+    ledManager.update();
+    
+    // Poll MQTT if connected (non-blocking)
     networkManager.pollMQTT();
     
     // Check if it's time for an update
     unsigned long currentTime = millis();
     if (currentTime - lastUpdateTime >= updateInterval) {
+        // Special handling for wait cycle - restart the cycle
+        if (currentState == AppState::WAIT_CYCLE) {
+            LOG_INFO("Wait cycle complete, starting new cycle...");
+            currentState = AppState::OBD_SETUP;
+            updateInterval = Intervals::INITIAL_DELAY;
+        }
+        
         processStateMachine();
         lastUpdateTime = currentTime;
     }
+    
+    // Small delay to prevent tight loop and reduce power consumption
+    delay(50);
 }
 
 void processStateMachine() {
@@ -114,6 +151,7 @@ void processStateMachine() {
 
 void handleOBDSetup() {
     LOG_INFO("Step 1: Setting up OBD connection...");
+    ledManager.indicateSetup();  // Purple LED for setup
     
     if (obdManager.connect()) {
         LOG_INFO("OBD connection successful");
@@ -128,6 +166,7 @@ void handleOBDSetup() {
 
 void handleOBDReadSOC() {
     LOG_INFO("Step 2: Reading State of Charge...");
+    ledManager.indicateOBDReading();  // GREEN LED for OBD reading
     
     if (obdManager.readStateOfCharge(vehicleData.stateOfCharge)) {
         currentState = AppState::OBD_READ_BATTERY_TEMP;
@@ -138,6 +177,7 @@ void handleOBDReadSOC() {
 
 void handleOBDReadTemp() {
     LOG_INFO("Step 3: Reading Battery Temperature...");
+    ledManager.indicateOBDReading();  // GREEN LED for OBD reading
     
     if (obdManager.readBatteryTemperature(vehicleData.batteryTemperature)) {
         currentState = AppState::OBD_READ_BATTERY_VOLTAGE;
@@ -148,6 +188,7 @@ void handleOBDReadTemp() {
 
 void handleOBDReadVoltage() {
     LOG_INFO("Step 4: Reading Battery Voltage...");
+    ledManager.indicateOBDReading();  // GREEN LED for OBD reading
     
     if (obdManager.readBatteryVoltage(vehicleData.batteryVoltage)) {
         currentState = AppState::OBD_CHARGE_TIMES;
@@ -158,6 +199,7 @@ void handleOBDReadVoltage() {
 
 void handleOBDReadTotalCharges() {
     LOG_INFO("Step 5: Reading total amount of charges...");
+    ledManager.indicateOBDReading();  // GREEN LED for OBD reading
     
     if (obdManager.readTotalCharges(vehicleData.totalCharges)) {
         currentState = AppState::OBD_TOTAL_CHARGED_KWH;
@@ -168,9 +210,10 @@ void handleOBDReadTotalCharges() {
 
 void handleOBDReadKwhCharged() {
     LOG_INFO("Step 6: Reading total kWh charged...");
+    ledManager.indicateOBDReading();  // GREEN LED for OBD reading
     
     if (obdManager.readTotalKwhCharged(vehicleData.totalKwhCharged)) {
-        currentState = AppState::OBT_TOTAL_DISCHARGED_KWH;
+        currentState = AppState::OBD_TOTAL_DISCHARGED_KWH;
     } else {
         handleError(ErrorMessages::TOTAL_KWH_CHARGED_FAILED);
     }
@@ -178,6 +221,7 @@ void handleOBDReadKwhCharged() {
 
 void handleOBDReadKwhDischarged() {
     LOG_INFO("Step 7: Reading total kWh discharged...");
+    ledManager.indicateOBDReading();  // GREEN LED for OBD reading
     
     if (obdManager.readTotalKwhDischarged(vehicleData.totalKwhDischarged)) {
         vehicleData.isValid = true;
@@ -189,6 +233,7 @@ void handleOBDReadKwhDischarged() {
 
 void handleWiFiConnect() {
     LOG_INFO("Step 8: Connecting to WiFi...");
+    ledManager.indicateNetworkOperation();  // Blue LED for network operations
     
     if (networkManager.connectWiFi()) {
         currentState = AppState::NTP_SYNC;
@@ -201,6 +246,7 @@ void handleWiFiConnect() {
 
 void handleNTPSync() {
     LOG_INFO("Step 9: Synchronizing time...");
+    ledManager.indicateNetworkOperation();  // Blue LED for network operations
     
     if (timeManager.syncWithNTP()) {
         currentState = AppState::MQTT_CONNECT;
@@ -212,6 +258,7 @@ void handleNTPSync() {
 
 void handleMQTTConnect() {
     LOG_INFO("Step 10: Connecting to MQTT broker...");
+    ledManager.indicateNetworkOperation();  // Blue LED for network operations
     
     if (networkManager.connectMQTT()) {
         currentState = AppState::MQTT_PUBLISH;
@@ -225,6 +272,7 @@ void handleMQTTConnect() {
 
 void handleMQTTPublish() {
     LOG_INFO("Step 11: Publishing data to MQTT...");
+    ledManager.indicateNetworkOperation();  // Blue LED for network operations
     
     // Publish status
     const char* status = obdManager.isCarConnectionLost() ? 
@@ -249,6 +297,9 @@ void handleMQTTPublish() {
         LOG_INFO_F("Total kWh charged: %.2f kWh", vehicleData.totalKwhCharged);
         LOG_INFO_F("Total kWh discharged: %.2f kWh", vehicleData.totalKwhDischarged);
         LOG_INFO("==============================");
+        
+        // Brief success indication with green blink
+        ledManager.blink(LED::GREEN, 2, 300);
     }
     
     // Publish timestamp
@@ -257,39 +308,56 @@ void handleMQTTPublish() {
     
     // Cleanup and prepare for next cycle
     cleanup();
+    
+    LOG_INFO("Cycle complete, setting up wait cycle...");
+    
+    // Set up wait cycle
     currentState = AppState::WAIT_CYCLE;
     updateInterval = Intervals::NORMAL_UPDATE;
     
-    LOG_INFO("Cycle complete, waiting for next update...");
+    // Set LED to yellow for waiting
+    ledManager.setColor(LED::YELLOW);
+    LOG_INFO("LED set to YELLOW for wait cycle");
 }
 
 void handleWaitCycle() {
-    LOG_INFO("Starting new cycle...");
-    currentState = AppState::OBD_SETUP;
-    updateInterval = Intervals::INITIAL_DELAY;
+    // Ensure LED is yellow during wait cycle
+    ledManager.setColor(LED::YELLOW);
+    LOG_DEBUG("In wait cycle, LED set to YELLOW");
+    // State transition is handled in main loop
 }
 
 void handleError(const char* errorMessage) {
     LOG_ERROR_F("Error occurred: %s", errorMessage);
+    ledManager.indicateError();  // Red LED for errors
     
-    // Try to report error via MQTT if possible
+    // Try to report error via MQTT if possible (with timeouts to prevent hanging)
+    bool mqttReportAttempted = false;
+    
     if (!networkManager.isWiFiConnected()) {
+        // Try WiFi connection with shorter timeout when in error state
         networkManager.connectWiFi();
     }
     
-    if (!timeManager.isSynced() && networkManager.isWiFiConnected()) {
-        timeManager.syncWithNTP();
+    if (networkManager.isWiFiConnected()) {
+        if (!timeManager.isSynced()) {
+            timeManager.syncWithNTP();
+        }
+        
+        if (!networkManager.isMQTTConnected()) {
+            networkManager.connectMQTT();
+        }
+        
+        if (networkManager.isMQTTConnected()) {
+            networkManager.publishStatus(errorMessage);
+            String timestamp = timeManager.getCurrentTimestamp();
+            networkManager.publishLastUpdate(timestamp.c_str());
+            mqttReportAttempted = true;
+        }
     }
     
-    if (!networkManager.isMQTTConnected() && networkManager.isWiFiConnected()) {
-        networkManager.connectMQTT();
-    }
-    
-    if (networkManager.isMQTTConnected()) {
-        networkManager.publishStatus(errorMessage);
-        String timestamp = timeManager.getCurrentTimestamp();
-        networkManager.publishLastUpdate(timestamp.c_str());
-    }
+    // Show error for a moment before cleanup
+    delay(mqttReportAttempted ? 1000 : 2000);
     
     // Cleanup and retry
     cleanup();

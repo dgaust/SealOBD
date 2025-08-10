@@ -8,6 +8,12 @@
 #define DEBUG_PORT Serial
 #define DEBUG_BAUD_RATE 115200
 
+// LED Configuration (for devices with RGB LEDs like M5Stack AtomS3 Lite)
+// Set ENABLE_LED to false if your device doesn't have an RGB LED
+#define LED_ENABLED true
+#define LED_PIN 35
+#define LED_BRIGHTNESS 50  // 0-100 brightness percentage
+
 // Connection Timeouts (ms)
 namespace Timeouts {
     constexpr unsigned long ELM_CONNECTION = 30000;
