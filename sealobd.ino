@@ -313,7 +313,9 @@ void handleMQTTPublish() {
     
     // Set up wait cycle
     currentState = AppState::WAIT_CYCLE;
-    updateInterval = Intervals::NORMAL_UPDATE;
+    updateInterval = obdManager.isCarConnectionLost() ? 
+                    Intervals::ERROR_RETRY : 
+                    Intervals::NORMAL_UPDATE;
     
     // Set LED to yellow for waiting
     ledManager.setColor(LED::YELLOW);
